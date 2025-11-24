@@ -1,12 +1,18 @@
 import pandas as pd
 import numpy as np
 import logging
-from data_loader import DataLoader
-from naive_laplace import NaiveLaplaceMechanism
-from r2t import R2TMechanism
-from shifted_inverse import ShiftedInverseMechanism
-from evaluator import run_multiple_trials
-from config import get_db_connection_string
+import sys
+import os
+
+# 修复导入路径
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+
+from core.data_loader import DataLoader
+from core.naive_laplace import NaiveLaplaceMechanism
+from core.r2t import R2TMechanism
+from core.shifted_inverse import ShiftedInverseMechanism
+from evaluation.evaluator import run_multiple_trials
+from utils.config import get_db_connection_string
 import matplotlib.pyplot as plt
 import seaborn as sns
 import os

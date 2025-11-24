@@ -1,3 +1,4 @@
+# src/tpch_data_loader.py
 import pandas as pd
 from sqlalchemy import create_engine, text
 import logging
@@ -5,13 +6,17 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-class DataLoader:
+class TPCHDataLoader:
+    """支持TPC-H标准参数的数据加载器"""
+    
     def __init__(self, db_connection_string):
         self.engine = create_engine(db_connection_string)
+        # TPC-H标准参数
+        self.market_segments = ['BUILDING', 'AUTOMOBILE', 'MACHINERY', 'HOUSEHOLD', 'FURNITURE']
     
-    def get_ground_truth(self):
-        """获取TPC-H Q3的精确结果作为黄金标准"""
-        query = text("""
+    def get_ground_truth(self, market_segment='BUILDING', date='1995-03-15'):
+        """获取指定参数的TPC-H Q3精确结果"""
+        query = text(f"""
         SELECT
             l_orderkey,
             SUM(l_extendedprice * (1 - l_discount)) as revenue,
@@ -22,11 +27,11 @@ class DataLoader:
             orders,
             lineitem
         WHERE
-            c_mktsegment = 'BUILDING'
+            c_mktsegment = '{market_segment}'
             AND c_custkey = o_custkey
             AND l_orderkey = o_orderkey
-            AND o_orderdate < '1995-03-15'
-            AND l_shipdate > '1995-03-15'
+            AND o_orderdate < '{date}'
+            AND l_shipdate > '{date}'
         GROUP BY
             l_orderkey, o_orderdate, o_shippriority
         ORDER BY
@@ -37,16 +42,15 @@ class DataLoader:
         
         try:
             ground_truth = pd.read_sql(query, self.engine)
-            logger.info(f"获取到黄金标准数据，共{len(ground_truth)}条记录")
-            logger.info(f"收入范围: {ground_truth['revenue'].min():.2f} - {ground_truth['revenue'].max():.2f}")
+            logger.info(f"获取到 {market_segment}-{date} 的黄金标准数据，共{len(ground_truth)}条记录")
             return ground_truth
         except Exception as e:
             logger.error(f"获取黄金标准数据失败: {e}")
             raise
     
-    def get_customer_contributions(self):
-        """获取每个客户的所有订单项贡献，用于敏感度计算和高级算法"""
-        query = text("""
+    def get_customer_contributions(self, market_segment='BUILDING', date='1995-03-15'):
+        """获取指定参数的客户贡献数据"""
+        query = text(f"""
         SELECT
             c.c_custkey,
             l.l_orderkey,
@@ -59,15 +63,16 @@ class DataLoader:
             JOIN orders o ON c.c_custkey = o.o_custkey
             JOIN lineitem l ON o.o_orderkey = l.l_orderkey
         WHERE
-            c.c_mktsegment = 'BUILDING'
-            AND o.o_orderdate < '1995-03-15'
-            AND l.l_shipdate > '1995-03-15'
+            c.c_mktsegment = '{market_segment}'
+            AND o.o_orderdate < '{date}'
+            AND l.l_shipdate > '{date}'
         ORDER BY c.c_custkey, l.l_orderkey, l.l_linenumber;
         """)
         
         try:
             contributions = pd.read_sql(query, self.engine)
-            logger.info(f"获取到客户贡献数据，共{len(contributions)}条记录，涉及{contributions['c_custkey'].nunique()}个客户")
+            logger.info(f"获取到 {market_segment}-{date} 的客户贡献数据，"
+                       f"共{len(contributions)}条记录，涉及{contributions['c_custkey'].nunique()}个客户")
             return contributions
         except Exception as e:
             logger.error(f"获取客户贡献数据失败: {e}")
@@ -84,25 +89,9 @@ class DataLoader:
         max_val = result['max_value'].iloc[0]
         logger.info(f"单个订单项最大价值: {max_val:.2f}")
         return max_val
-
-# 使用示例
-if __name__ == "__main__":
-    from config import get_db_connection_string
-    loader = DataLoader(get_db_connection_string())
-    ground_truth = loader.get_ground_truth()
-    print("黄金标准数据:")
-    print(ground_truth)
     
-    # 测试客户贡献数据
-    contributions = loader.get_customer_contributions()
-    print(f"\n客户贡献数据概况:")
-    print(f"总记录数: {len(contributions)}")
-    print(f"客户数量: {contributions['c_custkey'].nunique()}")
-    print(f"订单数量: {contributions['l_orderkey'].nunique()}")
-    
-    # 计算每个客户的总贡献
-    customer_totals = contributions.groupby('c_custkey')['contribution'].sum()
-    print(f"\n客户贡献统计:")
-    print(f"最大客户贡献: {customer_totals.max():.2f}")
-    print(f"平均客户贡献: {customer_totals.mean():.2f}")
-    print(f"客户贡献中位数: {customer_totals.median():.2f}")
+    def generate_tpch_dates(self, base_date='1995-03-15', num_dates=5):
+        """生成TPC-H标准日期范围"""
+        base = pd.to_datetime(base_date)
+        dates = [base + pd.Timedelta(days=i) for i in range(num_dates)]
+        return [d.strftime('%Y-%m-%d') for d in dates]

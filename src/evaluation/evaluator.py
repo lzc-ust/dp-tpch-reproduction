@@ -2,6 +2,11 @@ import numpy as np
 import pandas as pd
 from scipy.stats import kendalltau
 import logging
+import sys
+import os
+
+# 修复导入路径
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 logger = logging.getLogger(__name__)
 
@@ -106,8 +111,8 @@ def run_multiple_trials(mechanism_func, epsilon, n_trials=10, method_name=""):
         ground_truth = data_loader.get_ground_truth()
     else:
         # 如果无法获取data_loader，创建一个临时的
-        from data_loader import DataLoader
-        from config import get_db_connection_string
+        from core.data_loader import DataLoader
+        from utils.config import get_db_connection_string
         data_loader = DataLoader(get_db_connection_string())
         ground_truth = data_loader.get_ground_truth()
     
@@ -139,7 +144,7 @@ def run_multiple_trials(mechanism_func, epsilon, n_trials=10, method_name=""):
 
 # 测试函数
 def test_evaluator():
-    from data_loader import DataLoader
+    from core.data_loader import DataLoader
     from config import get_db_connection_string
     
     # 创建测试数据

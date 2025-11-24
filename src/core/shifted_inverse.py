@@ -1,11 +1,11 @@
+# src/core/shifted_inverse.py
 import numpy as np
 import pandas as pd
 import logging
-from scipy.stats import laplace
 
 logger = logging.getLogger(__name__)
 
-class R2TMechanism:
+class ShiftedInverseMechanism:
     def __init__(self, data_loader):
         self.data_loader = data_loader
     
@@ -14,7 +14,7 @@ class R2TMechanism:
         if len(qualities) == 0:
             return 0
         
-        # 将质量分数转换为正值（指数机制要求）
+        # 将质量分数转换为正值
         min_quality = min(qualities)
         adjusted_qualities = [q - min_quality + 1e-6 for q in qualities]
         
@@ -34,68 +34,87 @@ class R2TMechanism:
     
     def compute_quality(self, candidate_result, ground_truth):
         """计算候选结果的质量分数（负的MSE）"""
-        # 合并真实值和候选值
         merged = pd.merge(ground_truth, candidate_result, on='l_orderkey', 
                          how='inner', suffixes=('_truth', '_noisy'))
         
         if len(merged) == 0:
-            return -float('inf')  # 没有共同订单，质量很差
+            return -float('inf')
         
-        # 计算均方误差的负数（误差越小，质量越高）
         mse = ((merged['revenue'] - merged['noisy_revenue']) ** 2).mean()
-        return -mse  # 返回负MSE，这样MSE越小，质量分数越高
+        return -mse
     
-    def run_mechanism(self, epsilon, T_list=None, random_state=None):
-        """运行R2T机制"""
+    def run_mechanism(self, epsilon, T_list=None, market_segment='BUILDING', date='1995-03-15', random_state=None):
+        """运行Shifted Inverse机制"""
         if random_state is not None:
             np.random.seed(random_state)
         
         if T_list is None:
-            # 基于数据特征设置合理的T候选值
-            T_list = [1, 2, 5, 10, 20, 50]
+            # 基于客户贡献分布设置T候选值
+            T_list = [10000, 50000, 100000, 200000, 500000]
         
         # 预算分配
         epsilon_candidate = epsilon * 0.8
         epsilon_selection = epsilon * 0.2
         
         # 获取数据
-        contributions = self.data_loader.get_customer_contributions()
-        ground_truth = self.data_loader.get_ground_truth()
-        max_value_per_item = self.data_loader.get_max_value_per_item()
+        contributions = self.data_loader.get_customer_contributions(market_segment, date)
+        ground_truth = self.data_loader.get_ground_truth(market_segment, date)
         
-        logger.info(f"R2T机制开始，ε={epsilon}, 候选T={T_list}")
+        logger.info(f"Shifted Inverse机制开始，ε={epsilon}, 候选T={T_list}, 细分市场={market_segment}")
         
         candidate_results = []
         qualities = []
         
         for T in T_list:
-            # 1. 对每个客户截断订单项
-            truncated_lineitems = []
+            # 1. 对每个客户进行概率采样
+            sampled_lineitems = []
             
             for cust_key, group in contributions.groupby('c_custkey'):
-                # 按贡献值降序排列，取前T个
-                truncated = group.nlargest(T, 'contribution')
-                truncated_lineitems.append(truncated)
+                cust_total = group['contribution'].sum()
+                s = max(0, cust_total - T)
+                p = 1 / (s + 1)  # 采样概率
+                
+                # 概率性地保留该客户的订单项
+                for _, item in group.iterrows():
+                    if np.random.random() < p:
+                        weighted_item = item.copy()
+                        weighted_item['weight'] = 1 / p
+                        sampled_lineitems.append(weighted_item)
             
-            if not truncated_lineitems:
+            if not sampled_lineitems:
                 continue
                 
-            truncated_df = pd.concat(truncated_lineitems, ignore_index=True)
+            sampled_df = pd.DataFrame(sampled_lineitems)
             
-            # 2. 在截断数据集上计算订单收入
-            order_revenues = truncated_df.groupby('l_orderkey')['contribution'].sum().reset_index(name='truncated_revenue')
+            # 2. 在加权样本上重新聚合订单收入 - 修复groupby警告
+            if not sampled_df.empty:
+                # 使用agg方法避免apply的警告
+                order_revenues = sampled_df.groupby('l_orderkey').agg({
+                    'contribution': 'sum',
+                    'weight': 'first'
+                })
+                order_revenues['weighted_revenue'] = order_revenues['contribution'] * order_revenues['weight']
+                order_revenues = order_revenues.reset_index()[['l_orderkey', 'weighted_revenue']]
+            else:
+                order_revenues = pd.DataFrame(columns=['l_orderkey', 'weighted_revenue'])
             
             # 3. 添加拉普拉斯噪声
-            new_sensitivity = T * max_value_per_item
+            # 敏感度是 T（经过数学推导）
+            new_sensitivity = T
             scale = new_sensitivity / epsilon_candidate
             
             # 为所有可能出现在结果中的订单添加噪声
             all_orders = pd.DataFrame({'l_orderkey': ground_truth['l_orderkey']})
-            order_revenues = pd.merge(all_orders, order_revenues, on='l_orderkey', how='left')
-            order_revenues['truncated_revenue'] = order_revenues['truncated_revenue'].fillna(0)
+            if not order_revenues.empty:
+                order_revenues = pd.merge(all_orders, order_revenues, on='l_orderkey', how='left')
+            else:
+                order_revenues = all_orders.copy()
+                order_revenues['weighted_revenue'] = 0
+                
+            order_revenues['weighted_revenue'] = order_revenues['weighted_revenue'].fillna(0)
             
             noise = np.random.laplace(0, scale, len(order_revenues))
-            order_revenues['noisy_revenue'] = order_revenues['truncated_revenue'] + noise
+            order_revenues['noisy_revenue'] = order_revenues['weighted_revenue'] + noise
             
             # 取前10个
             candidate_result = order_revenues.nlargest(10, 'noisy_revenue')
@@ -114,28 +133,5 @@ class R2TMechanism:
         best_index = self.exponential_mechanism(qualities, epsilon_selection, T_list)
         final_result = candidate_results[best_index]
         
-        logger.info(f"R2T机制完成，选择T={T_list[best_index]}")
+        logger.info(f"Shifted Inverse机制完成，选择T={T_list[best_index]}, 细分市场={market_segment}")
         return final_result[['l_orderkey', 'noisy_revenue']]
-
-# 测试函数
-def test_r2t():
-    from data_loader import DataLoader
-    from config import get_db_connection_string
-    from evaluator import Evaluator
-    
-    loader = DataLoader(get_db_connection_string())
-    mechanism = R2TMechanism(loader)
-    
-    # 测试运行
-    result = mechanism.run_mechanism(epsilon=1.0, T_list=[1, 5, 10], random_state=42)
-    print("R2T机制结果:")
-    print(result)
-    
-    # 评估结果
-    ground_truth = loader.get_ground_truth()
-    evaluator = Evaluator(ground_truth)
-    metrics = evaluator.evaluate_all(result, "R2T")
-    print("评估结果:", metrics)
-
-if __name__ == "__main__":
-    test_r2t()

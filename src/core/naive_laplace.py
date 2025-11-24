@@ -1,3 +1,4 @@
+# src/core/naive_laplace.py
 import numpy as np
 import pandas as pd
 import logging
@@ -9,9 +10,9 @@ class NaiveLaplaceMechanism:
     def __init__(self, data_loader):
         self.data_loader = data_loader
     
-    def calculate_global_sensitivity(self):
+    def calculate_global_sensitivity(self, market_segment='BUILDING', date='1995-03-15'):
         """计算全局敏感度Δf - 一个客户能产生的最大收入影响"""
-        contributions = self.data_loader.get_customer_contributions()
+        contributions = self.data_loader.get_customer_contributions(market_segment, date)
         
         # 计算每个客户的总贡献
         customer_totals = contributions.groupby('c_custkey')['contribution'].sum()
@@ -20,16 +21,16 @@ class NaiveLaplaceMechanism:
         logger.info(f"计算得到全局敏感度 Δf = {delta_f:.2f}")
         return delta_f
     
-    def run_mechanism(self, epsilon, random_state=None):
+    def run_mechanism(self, epsilon, market_segment='BUILDING', date='1995-03-15', random_state=None):
         """运行朴素拉普拉斯机制"""
         if random_state is not None:
             np.random.seed(random_state)
         
         # 获取黄金标准数据
-        ground_truth = self.data_loader.get_ground_truth()
+        ground_truth = self.data_loader.get_ground_truth(market_segment, date)
         
         # 计算全局敏感度
-        delta_f = self.calculate_global_sensitivity()
+        delta_f = self.calculate_global_sensitivity(market_segment, date)
         
         # 对每个订单的收入添加拉普拉斯噪声
         noisy_result = ground_truth.copy()
@@ -42,25 +43,5 @@ class NaiveLaplaceMechanism:
         # 根据噪声收入重新排序并取前10
         final_result = noisy_result.nlargest(10, 'noisy_revenue')
         
-        logger.info(f"朴素拉普拉斯机制完成，ε={epsilon}")
+        logger.info(f"朴素拉普拉斯机制完成，ε={epsilon}, 细分市场={market_segment}")
         return final_result[['l_orderkey', 'noisy_revenue', 'o_orderdate', 'o_shippriority']]
-
-# 测试函数
-def test_naive_laplace():
-    from data_loader import DataLoader
-    
-    # 使用你的数据库连接信息
-    loader = DataLoader("mysql+pymysql://root:123456@localhost:3306/tpc_h")
-    mechanism = NaiveLaplaceMechanism(loader)
-    
-    # 测试运行
-    result = mechanism.run_mechanism(epsilon=1.0, random_state=42)
-    print("朴素拉普拉斯机制结果:")
-    print(result)
-    
-    # 测试敏感度计算
-    delta_f = mechanism.calculate_global_sensitivity()
-    print(f"全局敏感度: {delta_f}")
-
-if __name__ == "__main__":
-    test_naive_laplace()
