@@ -121,3 +121,5 @@ Thumbs.db
 *.temp
 .tmp/
 .temp/
+
+.trae/

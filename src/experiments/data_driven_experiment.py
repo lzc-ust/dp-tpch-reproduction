@@ -40,19 +40,14 @@ class DataDrivenExperiment:
         print("数据驱动的TPC-H差分隐私分析")
         print("=" * 80)
         
-        # 分析所有市场细分和日期的组合
-        segments = self.loader.market_segments
-        dates = self.loader.generate_tpch_dates()
-        
         all_results = []
         query_patterns_analyzed = 0
         
-        # 限制测试范围以避免长时间运行
-        test_segments = segments[:2]  # 只测试前2个细分市场
-        test_dates = dates[:2]       # 只测试前2个日期
+        market_segments = ['BUILDING', 'AUTOMOBILE', 'MACHINERY', 'HOUSEHOLD', 'FURNITURE']
+        dates = ['1995-03-01', '1995-03-08', '1995-03-15', '1995-03-22', '1995-03-29']
         
-        for segment in test_segments:
-            for date in test_dates:
+        for segment in market_segments:
+            for date in dates:
                 try:
                     logger.info(f"分析 {segment} {date}...")
                     
